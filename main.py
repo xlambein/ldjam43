@@ -9,7 +9,7 @@ PLAYER_JUMP = 150/FPS
 GRAVITY = 12/FPS
 
 FRICTION_GROUND = 30/FPS
-FRICTION_AIR = 1/FPS
+FRICTION_AIR = .95/FPS
 
 TEXT_COL = 1
 TEXT_WIDTH = 4
@@ -55,7 +55,7 @@ features = {
     'music': False,
     'sounds': False,
 
-    'friction': False,
+    'friction': True,
     'collisions': True,
     'gravity': False,
     'jump': False,
@@ -94,6 +94,8 @@ features_name = {
     'game': 'Game',
     'binary': 'Game binary',
     'friction': 'Friction',
+    'locks': 'Locked blocks',
+    'keys': 'Keys',
 }
 
 
@@ -534,7 +536,7 @@ class App:
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene(14))
+        self.scene_stack.push_scene(LevelScene(11))
 
         pyxel.run(self.update, self.draw)
 
