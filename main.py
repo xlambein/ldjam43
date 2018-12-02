@@ -8,6 +8,9 @@ PLAYER_SPEED = 60/FPS
 PLAYER_JUMP = 150/FPS
 GRAVITY = 12/FPS
 
+FRICTION_GROUND = 30/FPS
+FRICTION_AIR = 1/FPS
+
 TEXT_COL = 1
 TEXT_WIDTH = 4
 TEXT_HEIGHT = 6
@@ -15,23 +18,60 @@ TEXT_HEIGHT = 6
 GAME_TILES_W = 16
 GAME_TILES_H = 16
 
+N_LEVELS = 2
+
+TILE_PLAYER = 1
+TILE_BLOCK = 32
+TILE_DOOR = 33
+TILE_CACTUS = 34
+TILE_LOCK = 35
+TILE_KEY = 36
+
 features = {
     'sprites': True,
-    'rendering': True,
-    'collisions': True,
-    'gravity': True,
-#    'physics': True,
-    'plateforms': True,
-    'player': True,
-    'enemies': True,
     'music': True,
     'sounds': True,
+
+    'friction': True,
+    'collisions': True,
+    'gravity': True,
+    'plateforms': True,
+    'player': True,
     'jump': True,
     'left': True,
     'right': True,
-    'attack': True,
+
+    'rendering': True,
     'game': True,
-    'binary': True,
+
+#    'attack': True,
+#    'enemies': True,
+#    'physics': True,
+#    'binary': True,
+}
+
+features = {
+    'sprites': True,
+    'music': False,
+    'sounds': False,
+
+    'friction': False,
+    'collisions': True,
+    'gravity': False,
+    'jump': False,
+    'left': True,
+    'locks': True,
+    'keys': True,
+
+    'player': True,
+    'right': True,
+    'rendering': True,
+    'game': True,
+
+#    'attack': True,
+#    'enemies': True,
+#    'physics': True,
+#    'binary': True,
 }
 
 sacrifices = []
@@ -53,6 +93,7 @@ features_name = {
     'attack': 'Attacking',
     'game': 'Game',
     'binary': 'Game binary',
+    'friction': 'Friction',
 }
 
 
@@ -61,73 +102,98 @@ class GameError(Exception):
 
 
 def is_tile_wall(tile):
-    return tile == 32
+    return tile in (TILE_BLOCK, TILE_LOCK)
 
 
 def is_wall(x, y):
     return is_tile_wall(pyxel.tilemap(0).get(x, y))
 
 
+def apply_friction(v, amount):
+    if v > 0:
+        return max(0, v - amount)
+    else:
+        return min(0, v + amount)
+
+
 class Player:
     def __init__(self, x, y):
-        self.w = 4
+        self.w = 8
         self.h = 8
-        self.x = x + (8-self.w)//2
+        self.x = x# + (8-self.w)//2
         self.y = y
         self.vy = 0
+        self.vx = 0
         self.collide_door = False
+        self.collide_key = False
 
     def update(self):
         # Physics
         self.y += self.vy
 
-        self.cols = [
-            pyxel.tilemap(0).get(tx, ty)
-            for tx in range(int((self.x-1)//8), int((self.x+self.w)//8)+1)
-            for ty in range(int((self.y-1)//8), int((self.y+self.h)//8)+1)
-        ]
-
-        self.collide_door = 33 in self.cols
-
-        #if any(map(is_tile_wall, self.cols)):
+        if features['friction']:
+            self.vy = apply_friction(self.vy, FRICTION_AIR)
 
         # Collisions
         top = self.col_top()
         if top != False:
             self.vy = max(0, self.vy)
             self.y = top
+            if not features['gravity'] and pyxel.btnp(pyxel.KEY_DOWN):
+                self.vy = PLAYER_SPEED
 
         bottom = self.col_bottom()
         if bottom == False:
             # Gravity
             if features['gravity']:
                 self.vy += GRAVITY
-            else:
-                if pyxel.btn(pyxel.KEY_UP):
-                    self.y -= PLAYER_SPEED
-                if pyxel.btn(pyxel.KEY_DOWN):
-                    self.y += PLAYER_SPEED
         else:
-            self.vy = max(0, self.vy)
+            self.vy = min(0, self.vy)
             self.y = bottom - self.h
 
             if features['gravity']:
-                if pyxel.btn(pyxel.KEY_UP):
+                if features['jump'] and pyxel.btnp(pyxel.KEY_UP):
                     self.vy = -PLAYER_JUMP
+            else:
+                if pyxel.btnp(pyxel.KEY_UP):
+                    self.vy = -PLAYER_SPEED
+
+        self.x += self.vx
+
+        if features['friction']:
+            self.vx = apply_friction(
+                self.vx,
+                FRICTION_GROUND if (bottom and features['gravity']) else FRICTION_AIR)
 
         left = self.col_left()
         if left != False:
             self.x = left
+            self.vx = max(0, self.vx)
+            if not features['gravity'] and features['right'] and pyxel.btnp(pyxel.KEY_RIGHT):
+                self.vx = PLAYER_SPEED
         else:
-            if pyxel.btn(pyxel.KEY_LEFT):
-                self.x -= PLAYER_SPEED
+            if features['gravity'] and features['left'] and pyxel.btn(pyxel.KEY_LEFT):
+                self.vx = -PLAYER_SPEED
 
         right = self.col_right()
         if right != False:
             self.x = right - self.w
+            self.vx = min(0, self.vx)
+            if not features['gravity'] and features['left'] and pyxel.btnp(pyxel.KEY_LEFT):
+                self.vx = -PLAYER_SPEED
         else:
-            if pyxel.btn(pyxel.KEY_RIGHT):
-                self.x += PLAYER_SPEED
+            if features['gravity'] and features['right'] and pyxel.btn(pyxel.KEY_RIGHT):
+                self.vx = PLAYER_SPEED
+
+        #self.cols = [
+        #    pyxel.tilemap(0).get(tx, ty)
+        #    for tx in range(int((self.x-1)//8), int((self.x+self.w)//8)+1)
+        #    for ty in range(int((self.y-1)//8), int((self.y+self.h)//8)+1)
+        #]
+
+        tile = pyxel.tilemap(0).get(int(self.x+self.w/2)//8, int(self.y+self.h/2)//8)
+        self.collide_door = tile == TILE_DOOR
+        self.collide_key = tile == TILE_KEY
 
     def col_left(self):
         if features['collisions']:
@@ -166,7 +232,7 @@ class Player:
         return False
 
     def draw(self):
-        pyxel.blt(self.x, self.y, 0, 10, 0, self.w, self.h, 0)
+        pyxel.blt(self.x, self.y, 0, 8+4-self.w//2, 0, self.w, self.h, 0)
 
 
 class GuiMenu:
@@ -192,9 +258,9 @@ class GuiMenu:
 
         for i, item in enumerate(self.items):
             if i == self.selected:
-                text += '[x] ' + item + '\n'
+                text += ' [X] ' + item + '\n'
             else:
-                text += '[ ] ' + item + '\n'
+                text += ' [ ] ' + item + '\n'
 
         draw_textbox(text[:-1])
 
@@ -213,7 +279,7 @@ class SceneStack:
         self.scenes.append(scene)
 
     def pop_scene(self):
-        self.scenes.pop()
+        return self.scenes.pop()
 
     def clear_scenes(self):
         while len(self.scenes) > 0:
@@ -225,7 +291,7 @@ class SceneStack:
         self.menus.append(menu)
 
     def pop_menu(self):
-        self.menus.pop()
+        return self.menus.pop()
 
     def clear_menus(self):
         while len(self.menus) > 0:
@@ -266,9 +332,21 @@ class Menu:
         pass
 
 
-def find_in_level(level_map, tile):
+def find_in_level(tile):
+    level_map = pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H]
     y, x = np.where(level_map == tile)
     return x[0], y[0]
+
+
+def erase_tile(x, y):
+    pyxel.tilemap(0).set(x, y, 0)
+
+
+def erase_all_tiles_like(tile):
+    level_map = pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H]
+    ys, xs = np.where(level_map == tile)
+    for (x, y) in zip(xs, ys):
+        erase_tile(x, y)
 
 
 class LevelScene(Scene):
@@ -281,22 +359,25 @@ class LevelScene(Scene):
                 self.level * GAME_TILES_W, GAME_TILES_H,
                 GAME_TILES_W, GAME_TILES_H)
 
-        level_map = pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H]
-
         # Player location
         try:
-            px, py = find_in_level(level_map, 1)
-            pyxel.tilemap(0).set(px, py, 0)
+            px, py = find_in_level(TILE_PLAYER)
+            erase_tile(px, py)
         except IndexError:
             raise GameError("No player on level {}".format(self.level))
 
         # Door location
         try:
-            dx, dy = find_in_level(level_map, 33)
+            dx, dy = find_in_level(TILE_DOOR)
         except IndexError:
             raise GameError("No door on level {}".format(self.level))
 
         self.player = Player(px * 8, py * 8)
+
+        if not features['keys']:
+            erase_all_tiles_like(TILE_KEY)
+        if not features['locks']:
+            erase_all_tiles_like(TILE_LOCK)
 
         self.scene_stack.push_menu(SacrificeMenu())
 
@@ -308,8 +389,22 @@ class LevelScene(Scene):
             self.player.update()
 
         if self.player.collide_door:
+            # Next level transition
             self.scene_stack.pop_scene()
-            self.scene_stack.push_scene(LevelScene(self.level + 1))
+            if self.level < N_LEVELS - 1:
+                self.scene_stack.push_scene(LevelScene(self.level + 1))
+            else:
+                self.scene_stack.push_menu(EndgameMenu())
+
+        if self.player.collide_key:
+            erase_all_tiles_like(TILE_KEY)
+            erase_all_tiles_like(TILE_LOCK)
+
+        x, y = int(self.player.x//8), int(self.player.y//8)
+        if x < 0 or x > GAME_TILES_W or y < 0 or y > GAME_TILES_H:
+            # Restart level if we leave the boundaries
+            features[sacrifices.pop()] = True
+            self.load()
 
     def draw(self):
         pyxel.bltm(0, 0, 0, 0, 0, 16, 16)
@@ -333,8 +428,25 @@ class SacrificeMenu(Menu):
             features[feature] = False
             sacrifices.append(feature)
 
+            if not features['keys']:
+                erase_all_tiles_like(TILE_KEY)
+            if not features['locks']:
+                erase_all_tiles_like(TILE_LOCK)
+
     def draw(self):
         self.menu.draw()
+
+
+class EndgameMenu(Menu):
+    def load(self):
+        pass
+
+    def update(self):
+        if pyxel.btn(pyxel.KEY_ENTER):
+            pyxel.quit()
+
+    def draw(self):
+        draw_textbox("You win!")
 
 
 class PauseMenu(Menu):
@@ -361,10 +473,10 @@ class PauseMenu(Menu):
 
             # Previous level
             elif selected == 2:
-                pass
-                # features[sacrifices.pop()] = True
-                # features[sacrifices.pop()] = True
-                # self.scene_stack.top_scene().load()
+                features[sacrifices.pop()] = True
+                features[sacrifices.pop()] = True
+                level = self.scene_stack.pop_scene().level
+                self.scene_stack.push_scene(LevelScene(level - 1))
 
             # Quit
             elif selected == 3:
@@ -422,11 +534,14 @@ class App:
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene(0))
+        self.scene_stack.push_scene(LevelScene(14))
 
         pyxel.run(self.update, self.draw)
 
     def update(self):
+        if not features['game']:
+            pyxel.quit()
+
         menu = self.scene_stack.top_menu()
         if menu is not None:
             menu.update()
@@ -448,7 +563,6 @@ class App:
             menu = self.scene_stack.top_menu()
             if menu is not None:
                 menu.draw()
-
 
 
 App()
