@@ -56,8 +56,16 @@ features_name = {
 }
 
 
+class GameError(Exception):
+    """game errors"""
+
+
+def is_tile_wall(tile):
+    return tile == 32
+
+
 def is_wall(x, y):
-    return pyxel.tilemap(0).get(x, y) != 0
+    return is_tile_wall(pyxel.tilemap(0).get(x, y))
 
 
 class Player:
@@ -67,10 +75,21 @@ class Player:
         self.x = x + (8-self.w)//2
         self.y = y
         self.vy = 0
+        self.collide_door = False
 
     def update(self):
         # Physics
         self.y += self.vy
+
+        self.cols = [
+            pyxel.tilemap(0).get(tx, ty)
+            for tx in range(int((self.x-1)//8), int((self.x+self.w)//8)+1)
+            for ty in range(int((self.y-1)//8), int((self.y+self.h)//8)+1)
+        ]
+
+        self.collide_door = 33 in self.cols
+
+        #if any(map(is_tile_wall, self.cols)):
 
         # Collisions
         top = self.col_top()
@@ -247,20 +266,37 @@ class Menu:
         pass
 
 
-class LevelScene(Scene):
-    def load(self):
-        level = 0
+def find_in_level(level_map, tile):
+    y, x = np.where(level_map == tile)
+    return x[0], y[0]
 
+
+class LevelScene(Scene):
+    def __init__(self, level):
+        self.level = level
+
+    def load(self):
         pyxel.tilemap(0).copy(
                 0, 0, 0,
-                level * GAME_TILES_W, GAME_TILES_H,
+                self.level * GAME_TILES_W, GAME_TILES_H,
                 GAME_TILES_W, GAME_TILES_H)
 
-        py, px = np.where(pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H] == 1)
-        px, py = px[0], py[0]
-        self.player = Player(px * 8, py * 8)
+        level_map = pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H]
 
-        pyxel.tilemap(0).set(px, py, 0)
+        # Player location
+        try:
+            px, py = find_in_level(level_map, 1)
+            pyxel.tilemap(0).set(px, py, 0)
+        except IndexError:
+            raise GameError("No player on level {}".format(self.level))
+
+        # Door location
+        try:
+            dx, dy = find_in_level(level_map, 33)
+        except IndexError:
+            raise GameError("No door on level {}".format(self.level))
+
+        self.player = Player(px * 8, py * 8)
 
         self.scene_stack.push_menu(SacrificeMenu())
 
@@ -270,6 +306,10 @@ class LevelScene(Scene):
 
         if features['player']:
             self.player.update()
+
+        if self.player.collide_door:
+            self.scene_stack.pop_scene()
+            self.scene_stack.push_scene(LevelScene(self.level + 1))
 
     def draw(self):
         pyxel.bltm(0, 0, 0, 0, 0, 16, 16)
@@ -375,14 +415,14 @@ def draw_textbox(text, w=None, h=None):
 class App:
     def __init__(self):
         pyxel.init(GAME_TILES_W*8, GAME_TILES_H*8,
-            caption="Sacrifices Must be Made",
+            caption="Sacrifices Must Be Made",
             fps=FPS,
             scale=8)
 
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene())
+        self.scene_stack.push_scene(LevelScene(0))
 
         pyxel.run(self.update, self.draw)
 
