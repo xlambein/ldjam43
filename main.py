@@ -37,8 +37,8 @@ features = {
     'keys': True,
     'locks': True,
     'jump': True,
-    'gravity': True,
-    'friction': True,
+    'gravity': False,
+    'friction': False,
     'left': True,
 
     'tutorial': True,
@@ -472,12 +472,12 @@ class SacrificeMenu(Menu):
 
 
 class TextSequence:
-    def __init__(self, texts, color=TEXT_COL, delay=FPS):
+    def __init__(self, texts, color=TEXT_COL, init_delay=0, delay=FPS):
         self.texts = texts
         self.iter = 0
         self.color = color
         self.delay = delay
-        self.timer = 0
+        self.timer = -init_delay
 
     def update(self):
         self.timer += 1
@@ -512,7 +512,7 @@ no-one to share my
 thoughts with.""",
 
 """I guess, I won?""",
-        ], color=3, delay=3*FPS)
+        ], color=3, init_delay=2*FPS, delay=3*FPS)
 
     def update(self):
         if self.text_sequence.update():
@@ -542,6 +542,7 @@ class BadEndgameScene(Scene):
 
 class GoodEndgameMenu(Menu):
     def load(self):
+        features['rendering'] = True
         self.text_sequence = TextSequence([
 """You won!...""",
 
@@ -568,7 +569,7 @@ to say.""",
 """...""",
 
 """Thank you."""
-        ])
+        ], init_delay=3*FPS, delay=2*FPS)
 
     def update(self):
         if self.text_sequence.update():
@@ -839,7 +840,7 @@ class App:
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene(0))
+        self.scene_stack.push_scene(LevelScene(10))
 
         pyxel.run(self.update, self.draw)
 
