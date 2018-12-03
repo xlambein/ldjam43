@@ -37,8 +37,8 @@ features = {
     'keys': True,
     'locks': True,
     'jump': True,
-    'gravity': False,
-    'friction': False,
+    'gravity': True,
+    'friction': True,
     'left': True,
 
     'tutorial': True,
@@ -840,7 +840,7 @@ class App:
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene(10))
+        self.scene_stack.push_scene(LevelScene(0))
 
         pyxel.run(self.update, self.draw)
 
