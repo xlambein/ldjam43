@@ -18,7 +18,8 @@ TEXT_HEIGHT = 6
 GAME_TILES_W = 16
 GAME_TILES_H = 16
 
-N_LEVELS = 2
+FIRST_LEVEL = 0
+LAST_LEVEL = 10
 
 TILE_PLAYER = 1
 TILE_BLOCK = 32
@@ -26,55 +27,31 @@ TILE_DOOR = 33
 TILE_CACTUS = 34
 TILE_LOCK = 35
 TILE_KEY = 36
+TILE_UNLOCKED = 37
 
 features = {
+    'animations': True,
+    'windows': True,
     'sprites': True,
-    'music': True,
-    'sounds': True,
 
-    'friction': True,
-    'collisions': True,
-    'gravity': True,
-    'plateforms': True,
-    'player': True,
-    'jump': True,
-    'left': True,
-    'right': True,
-
-    'rendering': True,
-    'game': True,
-
-#    'attack': True,
-#    'enemies': True,
-#    'physics': True,
-#    'binary': True,
-}
-
-features = {
-    'sprites': True,
-    'music': False,
-    'sounds': False,
-
-    'friction': True,
-    'collisions': True,
-    'gravity': False,
-    'jump': False,
-    'left': True,
-    'locks': True,
     'keys': True,
+    'locks': True,
+    'jump': True,
+    'gravity': True,
+    'friction': True,
+    'left': True,
 
+    'tutorial': True,
+
+    'collisions': True,
     'player': True,
     'right': True,
     'rendering': True,
     'game': True,
-
-#    'attack': True,
-#    'enemies': True,
-#    'physics': True,
-#    'binary': True,
 }
 
 sacrifices = []
+last_sacrifice = ''
 
 features_name = {
     'sprites': 'Sprites',
@@ -96,6 +73,9 @@ features_name = {
     'friction': 'Friction',
     'locks': 'Locked blocks',
     'keys': 'Keys',
+    'tutorial': 'Help text',
+    'windows': 'Windows',
+    'animations': 'Animations',
 }
 
 
@@ -118,6 +98,9 @@ def apply_friction(v, amount):
         return min(0, v + amount)
 
 
+PLAYER_ANIM_PERIOD = 0.25 * FPS
+
+
 class Player:
     def __init__(self, x, y):
         self.w = 8
@@ -128,6 +111,10 @@ class Player:
         self.vx = 0
         self.collide_door = False
         self.collide_key = False
+
+        self.direction = 'r'
+        self.anim_state = 0
+        self.anim_timer = 0
 
     def update(self):
         # Physics
@@ -197,6 +184,21 @@ class Player:
         self.collide_door = tile == TILE_DOOR
         self.collide_key = tile == TILE_KEY
 
+        # Animation
+        self.anim_timer += 1
+        if self.anim_timer >= PLAYER_ANIM_PERIOD:
+            self.anim_timer = 0
+            self.anim_state = (self.anim_state + 1) % 2
+
+        if self.vx < 0:
+            self.direction = 'l'
+        elif self.vx > 0:
+            self.direction = 'r'
+
+        # Suppress animations if not moving
+        if self.vx == 0 or not features['animations']:
+            self.anim_state = 0
+
     def col_left(self):
         if features['collisions']:
             x = int((self.x-1)//8)
@@ -234,14 +236,20 @@ class Player:
         return False
 
     def draw(self):
-        pyxel.blt(self.x, self.y, 0, 8+4-self.w//2, 0, self.w, self.h, 0)
+        if self.direction == 'r':
+            frame = 1 + self.anim_state
+        else:
+            frame = 3 + self.anim_state
+        img = 0 if features['sprites'] else 1
+        pyxel.blt(self.x, self.y, img, frame*8+4-self.w//2, 0, self.w, self.h, 0)
 
 
 class GuiMenu:
-    def __init__(self, title, items):
+    def __init__(self, title, item_names, items, selected=0):
         self.title = title
+        self.item_names = item_names
         self.items = items
-        self.selected = 0
+        self.selected = selected
 
     def update(self):
         if pyxel.btnp(pyxel.KEY_UP, 0.5 * FPS, 0.1 * FPS):
@@ -260,14 +268,14 @@ class GuiMenu:
 
         for i, item in enumerate(self.items):
             if i == self.selected:
-                text += ' [X] ' + item + '\n'
+                text += ' [X] ' + self.item_names[item] + '\n'
             else:
-                text += ' [ ] ' + item + '\n'
+                text += ' [ ] ' + self.item_names[item] + '\n'
 
         draw_textbox(text[:-1])
 
-    def get(self, i):
-        return self.items[i]
+    def selected_item(self):
+        return self.items[self.selected]
 
 
 class SceneStack:
@@ -340,25 +348,26 @@ def find_in_level(tile):
     return x[0], y[0]
 
 
-def erase_tile(x, y):
-    pyxel.tilemap(0).set(x, y, 0)
+def erase_tile(x, y, erase_with=0):
+    pyxel.tilemap(0).set(x, y, erase_with)
 
 
-def erase_all_tiles_like(tile):
+def erase_all_tiles_like(tile, erase_with=0):
     level_map = pyxel.tilemap(0).data[:GAME_TILES_W,:GAME_TILES_H]
     ys, xs = np.where(level_map == tile)
     for (x, y) in zip(xs, ys):
-        erase_tile(x, y)
+        erase_tile(x, y, erase_with)
 
 
 class LevelScene(Scene):
     def __init__(self, level):
         self.level = level
+        self.dialog = None
 
     def load(self):
         pyxel.tilemap(0).copy(
-                0, 0, 0,
-                self.level * GAME_TILES_W, GAME_TILES_H,
+                0, 0, 1,
+                self.level * GAME_TILES_W, 0,
                 GAME_TILES_W, GAME_TILES_H)
 
         # Player location
@@ -381,7 +390,12 @@ class LevelScene(Scene):
         if not features['locks']:
             erase_all_tiles_like(TILE_LOCK)
 
-        self.scene_stack.push_menu(SacrificeMenu())
+        if self.level > FIRST_LEVEL:
+            self.scene_stack.push_menu(SacrificeMenu())
+
+        if features['tutorial']:
+            if self.level - FIRST_LEVEL < len(TUTORIAL_TEXTS):
+                self.scene_stack.push_menu(TutorialMenu(TUTORIAL_TEXTS[self.level - FIRST_LEVEL]))
 
     def update(self):
         if pyxel.btn(pyxel.KEY_TAB):
@@ -393,42 +407,60 @@ class LevelScene(Scene):
         if self.player.collide_door:
             # Next level transition
             self.scene_stack.pop_scene()
-            if self.level < N_LEVELS - 1:
+            if self.level < LAST_LEVEL:
                 self.scene_stack.push_scene(LevelScene(self.level + 1))
             else:
-                self.scene_stack.push_menu(EndgameMenu())
+                if features['tutorial']:
+                    self.scene_stack.push_menu(GoodEndgameMenu())
+                else:
+                    self.scene_stack.push_menu(BadEndgameMenu())
 
         if self.player.collide_key:
             erase_all_tiles_like(TILE_KEY)
-            erase_all_tiles_like(TILE_LOCK)
+            erase_all_tiles_like(TILE_LOCK, erase_with=TILE_UNLOCKED)
 
         x, y = int(self.player.x//8), int(self.player.y//8)
-        if x < 0 or x > GAME_TILES_W or y < 0 or y > GAME_TILES_H:
+        if x < -2 or x > GAME_TILES_W+1 or y < -2 or y > GAME_TILES_H+1:
             # Restart level if we leave the boundaries
-            features[sacrifices.pop()] = True
+            if self.scene_stack.top_scene().level > FIRST_LEVEL:
+                features[sacrifices.pop()] = True
             self.load()
 
     def draw(self):
+        if features['sprites']:
+            pyxel.tilemap(0).refimg = 0
+        else:
+            pyxel.tilemap(0).refimg = 1
         pyxel.bltm(0, 0, 0, 0, 0, 16, 16)
 
         if features['player']:
             self.player.draw()
 
+        if self.dialog is not None:
+            draw_textbox(self.dialog, y='bottom')
+
 
 class SacrificeMenu(Menu):
     def load(self):
-        items = [name for name, state in features.items() if state]
-        self.menu = GuiMenu("Choose a sacrifice:", items)
+        print(last_sacrifice)
+        active_features = [name for name, state in features.items() if state]
+        items = ['animations', 'sprites', 'windows', 'rendering', 'tutorial', 'keys', 'locks', 'friction', 'gravity', 'collisions', 'left', 'right', 'jump', 'player', 'game']
+        items = [item for item in items if item in active_features]
+        print(items)
+
+        selected = np.where(last_sacrifice == np.array(items))[0]
+        selected = selected[0] if len(selected) > 0 else 0
+        self.menu = GuiMenu("Choose a sacrifice:", features_name, items, selected)
 
     def update(self):
         if self.menu.update():
             self.scene_stack.pop_menu()
 
-            selected = self.menu.selected
-            feature = self.menu.get(selected)
-            print("Sacrificed", selected, feature)
+            feature = self.menu.selected_item()
+            print("Sacrificed", features_name[feature])
             features[feature] = False
             sacrifices.append(feature)
+            last_sacrifice = feature
 
             if not features['keys']:
                 erase_all_tiles_like(TILE_KEY)
@@ -439,56 +471,316 @@ class SacrificeMenu(Menu):
         self.menu.draw()
 
 
-class EndgameMenu(Menu):
-    def load(self):
-        pass
+class TextSequence:
+    def __init__(self, texts, color=TEXT_COL, delay=FPS):
+        self.texts = texts
+        self.iter = 0
+        self.color = color
+        self.delay = delay
+        self.timer = 0
 
     def update(self):
-        if pyxel.btn(pyxel.KEY_ENTER):
+        self.timer += 1
+        if self.timer > self.delay:
+            if pyxel.btn(pyxel.KEY_ENTER):
+                self.iter += 1
+                self.timer = 0
+                if self.iter >= len(self.texts):
+                    return True
+        return False
+
+    def get_current_text(self):
+        return self.texts[self.iter]
+
+    def draw(self):
+        if self.timer > self.delay:
+            draw_textbox(self.get_current_text(), color=self.color)
+
+
+class BadEndgameMenu(Menu):
+    def load(self):
+        self.scene_stack.push_scene(BadEndgameScene())
+        self.text_sequence = TextSequence([
+"""This was the last
+puzzle, I think.""",
+
+"""What am I left with?""",
+
+"""I can only see and
+think, but there is
+no-one to share my
+thoughts with.""",
+
+"""I guess, I won?""",
+        ], color=3, delay=3*FPS)
+
+    def update(self):
+        if self.text_sequence.update():
             pyxel.quit()
 
     def draw(self):
-        draw_textbox("You win!")
+        self.text_sequence.draw()
+
+
+class BadEndgameScene(Scene):
+    def load(self):
+        pyxel.tilemap(0).copy(
+                0, 0, 0,
+                15 * GAME_TILES_W, 0,
+                GAME_TILES_W, GAME_TILES_H)
+
+    def update(self):
+        pass
+
+    def draw(self):
+        if features['sprites']:
+            pyxel.tilemap(0).refimg = 0
+        else:
+            pyxel.tilemap(0).refimg = 1
+        pyxel.bltm(0, 0, 0, 0, 0, 16, 16)
+
+
+class GoodEndgameMenu(Menu):
+    def load(self):
+        self.text_sequence = TextSequence([
+"""You won!...""",
+
+"""But at what cost?""",
+
+"""You abandoned the
+beauty of this
+world...""",
+
+"""You took the harder
+path...""",
+
+"""And ultimately, you
+surrendered to
+darkness...""",
+
+"""...All that, for me?""",
+
+"""...""",
+
+"""I don't know what
+to say.""",
+
+"""...""",
+
+"""Thank you."""
+        ])
+
+    def update(self):
+        if self.text_sequence.update():
+            self.scene_stack.push_menu(CreditMenu(12))
+
+    def draw(self):
+        self.text_sequence.draw()
+
+
+class CreditMenu(Menu):
+    def __init__(self, background):
+        self.background = background
+
+    def load(self):
+        self.text_sequence = TextSequence([
+"""A game by
+
+Xavier Lambein
+
+@xlambein
+lambein.xyz""",
+
+"""Made in 48 hours
+during the game jam
+Ludum Dare 43.""",
+
+"""Thank you so much
+for playing!""",
+        ], 2)
+
+    def update(self):
+        if self.text_sequence.update():
+            pyxel.quit()
+
+    def draw(self):
+        pyxel.cls(self.background)
+        self.text_sequence.draw()
 
 
 class PauseMenu(Menu):
     def load(self):
-        # FIXME previous level when there's only one
-        self.menu = GuiMenu("Game paused", [
-            "Resume",
-            "Restart level",
-            "Previous level",
-            "Quit",
-        ])
+        if self.scene_stack.top_scene().level > FIRST_LEVEL:
+            items = ['resume', 'restart', 'previous', 'quit']
+        else:
+            items = ['resume', 'restart', 'quit']
+        item_names = {
+            'resume': "Resume",
+            'restart': "Restart level",
+            'previous': "Previous level",
+            'quit': "Quit",
+        }
+        self.menu = GuiMenu("Game paused", item_names, items)
 
     def update(self):
         if self.menu.update():
             self.scene_stack.pop_menu()
 
-            selected = self.menu.selected
-            print("Selected", selected, self.menu.get(selected))
+            selected = self.menu.selected_item()
 
             # Restart level
-            if selected == 1:
-                features[sacrifices.pop()] = True
+            if selected == 'restart':
+                if self.scene_stack.top_scene().level > FIRST_LEVEL:
+                    features[sacrifices.pop()] = True
                 self.scene_stack.top_scene().load()
 
             # Previous level
-            elif selected == 2:
-                features[sacrifices.pop()] = True
+            elif selected == 'previous':
                 features[sacrifices.pop()] = True
                 level = self.scene_stack.pop_scene().level
+                if level-1 > FIRST_LEVEL:
+                    features[sacrifices.pop()] = True
                 self.scene_stack.push_scene(LevelScene(level - 1))
 
             # Quit
-            elif selected == 3:
+            elif selected == 'quit':
                 pyxel.quit()
 
     def draw(self):
         self.menu.draw()
 
 
-def draw_textbox(text, w=None, h=None):
+class TutorialMenu(Menu):
+    def __init__(self, text):
+        self.dialog = text
+
+    def update(self):
+        if pyxel.btnr(pyxel.KEY_ENTER):
+            self.scene_stack.pop_menu()
+
+    def draw(self):
+        draw_textbox(self.dialog, w=12)
+
+
+TUTORIAL_TEXTS = [
+
+"""Welcome to this game!
+
+Reach any door to finish
+a level.
+Use the arrow keys to
+move and jump.
+
+Press Tab in-game to
+show the menu.  You can
+restart from there if
+you're stuck.
+
+Press Enter to continue.""",
+
+"""Before entering a level,
+you must sacrifice one
+feature of this game.
+
+Select a sacrifice with
+the arrows keys and
+submit with Enter.
+
+From the menu, you can
+go back to the previous
+level to change a
+sacrifice.""",
+
+"""To get past these
+blocks you're gonna
+need to get a hold of
+this key.
+
+You're doing great, so
+it should be easy for
+you!  Good luck!""",
+
+"""Here's my final piece
+of information for you;
+when gravity is gone,
+the only way to move is
+to push against a
+surface.
+
+I think it's only
+useful for the endgame,
+though, but I'm not
+sure.  I haven't been
+there.  I wish I
+could...
+
+Okay, well.  I guess
+that's all!  Good luck
+and farewell!""",
+
+"""Oh, I'm still here?
+
+You should sacrifice me.
+There are more important
+features in this game
+than me.
+
+I'm "Help text" in the
+list.
+
+Really, it'll be much
+easier for you that way.""",
+
+"""I haven't seen this
+level in ages!
+
+Wait--
+
+Why are you doing this?
+Why am I still with
+you?""",
+
+"""You are making your
+life so much harder,
+you know that?
+
+Maybe you just don't
+realize it yet.""",
+
+"""See?  That's what I
+meant.
+
+This puzzle would've
+been so much easier
+with a jump.""",
+
+"""You know, I don't
+remember ever existing
+that long.
+
+Like--  I have never
+seen this level.  This
+is exciting.""",
+
+"""...Hey, you're still
+here?
+
+Listen, I'm sorry I was
+rude earlier.
+
+It's just.  I don't
+understand why you'd
+do this for me?
+
+But... I am grateful.
+I've always wanted to
+go that far in the
+game."""
+
+]
+
+
+def draw_textbox(text, x=None, y=None, w=None, h=None, color=TEXT_COL):
     lines = text.split('\n')
     lens = map(len, lines)
 
@@ -500,43 +792,54 @@ def draw_textbox(text, w=None, h=None):
     if h is None:
         h = int(np.ceil(rows * TEXT_HEIGHT / 8))
 
-    TSX = 1
-    TSY = 1
+    if features['sprites']:
+        TSX, TSY = 1, 1
+    else:
+        TSX, TSY = 4, 1
 
-    x = (GAME_TILES_W - w) // 2
-    y = (GAME_TILES_H - h) // 2
+    if x is None:
+        x = (GAME_TILES_W - w) // 2
+    if y is None:
+        y = (GAME_TILES_H - h) // 2
+    elif y == 'bottom':
+        y = (GAME_TILES_H - h) - 1
 
-    pyxel.blt((x-1)*8, (y-1)*8, 2, (TSX-1)*8, (TSY-1)*8, 8, 8, colkey=0)
-    pyxel.blt((x+w)*8, (y-1)*8, 2, (TSX+1)*8, (TSY-1)*8, 8, 8, colkey=0)
-    pyxel.blt((x-1)*8, (y+h)*8, 2, (TSX-1)*8, (TSY+1)*8, 8, 8, colkey=0)
-    pyxel.blt((x+w)*8, (y+h)*8, 2, (TSX+1)*8, (TSY+1)*8, 8, 8, colkey=0)
+    if features['windows']:
+        pyxel.blt((x-1)*8, (y-1)*8, 2, (TSX-1)*8, (TSY-1)*8, 8, 8, colkey=0)
+        pyxel.blt((x+w)*8, (y-1)*8, 2, (TSX+1)*8, (TSY-1)*8, 8, 8, colkey=0)
+        pyxel.blt((x-1)*8, (y+h)*8, 2, (TSX-1)*8, (TSY+1)*8, 8, 8, colkey=0)
+        pyxel.blt((x+w)*8, (y+h)*8, 2, (TSX+1)*8, (TSY+1)*8, 8, 8, colkey=0)
 
-    for i in range(w):
-        pyxel.blt((x+i)*8, (y-1)*8, 2, TSX*8, (TSY-1)*8, 8, 8, colkey=0)
-        pyxel.blt((x+i)*8, (y+h)*8, 2, TSX*8, (TSY+1)*8, 8, 8, colkey=0)
+        for i in range(w):
+            pyxel.blt((x+i)*8, (y-1)*8, 2, TSX*8, (TSY-1)*8, 8, 8, colkey=0)
+            pyxel.blt((x+i)*8, (y+h)*8, 2, TSX*8, (TSY+1)*8, 8, 8, colkey=0)
 
-    for j in range(h):
-        pyxel.blt((x-1)*8, (y+j)*8, 2, (TSX-1)*8, TSY*8, 8, 8, colkey=0)
-        pyxel.blt((x+w)*8, (y+j)*8, 2, (TSX+1)*8, TSY*8, 8, 8, colkey=0)
-
-    for i in range(w):
         for j in range(h):
-            pyxel.blt((x+i)*8, (y+j)*8, 2, TSX*8, TSY*8, 8, 8)
+            pyxel.blt((x-1)*8, (y+j)*8, 2, (TSX-1)*8, TSY*8, 8, 8, colkey=0)
+            pyxel.blt((x+w)*8, (y+j)*8, 2, (TSX+1)*8, TSY*8, 8, 8, colkey=0)
 
-    pyxel.text(x*8, y*8, text, TEXT_COL)
+        for i in range(w):
+            for j in range(h):
+                pyxel.blt((x+i)*8, (y+j)*8, 2, TSX*8, TSY*8, 8, 8)
+
+        pyxel.text(x*8, y*8, text, color)
+
+    else:
+        pyxel.text(x*8+1, y*8, text, color)
+        pyxel.text(x*8, y*8, text, 7)
 
 
 class App:
     def __init__(self):
         pyxel.init(GAME_TILES_W*8, GAME_TILES_H*8,
-            caption="Sacrifices Must Be Made",
+            caption="Sacrifice This Game",
             fps=FPS,
             scale=8)
 
         pyxel.load("resource.pyxel")
 
         self.scene_stack = SceneStack()
-        self.scene_stack.push_scene(LevelScene(11))
+        self.scene_stack.push_scene(LevelScene(0))
 
         pyxel.run(self.update, self.draw)
 
